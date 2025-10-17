@@ -1,0 +1,74 @@
+# ============================================
+# CONTROL DIFUSO DE VELOCIDAD DE VENTILADOR
+# ============================================
+
+# Importamos librerías
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+import matplotlib.pyplot as plt
+
+# -------------------------------
+# 1️⃣ Definición de las variables difusas
+# -------------------------------
+# Variable de entrada: Temperatura (0 a 40 °C)
+temperatura = ctrl.Antecedent(np.arange(0, 41, 1), 'temperatura')
+
+# Variable de salida: Velocidad del ventilador (0 a 100 %)
+velocidad = ctrl.Consequent(np.arange(0, 101, 1), 'velocidad')
+
+# -------------------------------
+# 2️⃣ Funciones de membresía
+# -------------------------------
+# Temperatura puede ser: baja, media o alta
+temperatura['baja'] = fuzz.trimf(temperatura.universe, [0, 0, 20])
+temperatura['media'] = fuzz.trimf(temperatura.universe, [15, 25, 35])
+temperatura['alta'] = fuzz.trimf(temperatura.universe, [30, 40, 40])
+
+# Velocidad puede ser: lenta, media o rápida
+velocidad['lenta'] = fuzz.trimf(velocidad.universe, [0, 0, 50])
+velocidad['media'] = fuzz.trimf(velocidad.universe, [25, 50, 75])
+velocidad['rápida'] = fuzz.trimf(velocidad.universe, [50, 100, 100])
+
+# Mostramos los conjuntos difusos
+temperatura.view()
+velocidad.view()
+
+# -------------------------------
+# 3️⃣ Reglas difusas (IF - THEN)
+# -------------------------------
+# Si la temperatura es baja → velocidad lenta
+regla1 = ctrl.Rule(temperatura['baja'], velocidad['lenta'])
+
+# Si la temperatura es media → velocidad media
+regla2 = ctrl.Rule(temperatura['media'], velocidad['media'])
+
+# Si la temperatura es alta → velocidad rápida
+regla3 = ctrl.Rule(temperatura['alta'], velocidad['rápida'])
+
+# -------------------------------
+# 4️⃣ Sistema de control difuso
+# -------------------------------
+controlador = ctrl.ControlSystem([regla1, regla2, regla3])
+simulador = ctrl.ControlSystemSimulation(controlador)
+
+# -------------------------------
+# 5️⃣ Simulación del sistema
+# -------------------------------
+# Ingresamos una temperatura
+entrada_temperatura = 28
+simulador.input['temperatura'] = entrada_temperatura
+
+# Calculamos la salida
+simulador.compute()
+
+# Mostramos resultado numérico
+print(f"Temperatura: {entrada_temperatura}°C → Velocidad: {simulador.output['velocidad']:.2f}%")
+
+# -------------------------------
+# 6️⃣ Visualización del resultado
+# -------------------------------
+# Mostramos cómo se obtiene la velocidad resultante
+velocidad.view(simulador)
+
+plt.show()
