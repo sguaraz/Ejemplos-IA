@@ -1,0 +1,161 @@
+# -----------------------------------------------
+# Sistema de Recomendación con GUI
+# Red Neuronal + Lógica Difusa + Algoritmo Genético
+
+# -----------------------------------------------
+
+import numpy as np
+import pandas as pd
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+from sklearn.neural_network import MLPRegressor
+from deap import base, creator, tools, algorithms
+import random
+import tkinter as tk
+from tkinter import ttk
+
+# -----------------------------
+# 1️⃣ Dataset
+# -----------------------------
+data = pd.DataFrame({
+    'titulo': ['Rip', 'one piece ', 'yo Robot', 'Alita batalla', 'Harry Potter'],
+    'genero_romantico': [0.2, 0.8, 0.5, 0.1, 0.9],
+    'popularidad': [500, 1500, 800, 200, 1200],
+    'calificacion': [4.0, 4.5, 3.8, 4.2, 4.8]
+})
+
+preferencias_usuario = np.array([0.2, 0.9, 0.6, 0.1, 0.95])
+
+# -----------------------------
+# 2️⃣ Lógica Difusa
+# -----------------------------
+romance = ctrl.Antecedent(np.arange(0, 1.1, 0.1), 'romance')
+romance['poco'] = fuzz.trimf(romance.universe, [0, 0, 0.5])
+romance['algo'] = fuzz.trimf(romance.universe, [0.2, 0.5, 0.8])
+romance['mucho'] = fuzz.trimf(romance.universe, [0.5, 1, 1])
+
+score = ctrl.Consequent(np.arange(0, 11, 1), 'score')
+score['bajo'] = fuzz.trimf(score.universe, [0, 0, 5])
+score['medio'] = fuzz.trimf(score.universe, [3, 5, 7])
+score['alto'] = fuzz.trimf(score.universe, [5, 10, 10])
+
+rule1 = ctrl.Rule(romance['poco'], score['bajo'])
+rule2 = ctrl.Rule(romance['algo'], score['medio'])
+rule3 = ctrl.Rule(romance['mucho'], score['alto'])
+
+score_ctrl = ctrl.ControlSystem([rule1, rule2, rule3])
+score_sim = ctrl.ControlSystemSimulation(score_ctrl)
+
+def score_difuso(valor_romance):
+    score_sim.input['romance'] = valor_romance
+    score_sim.compute()
+    return score_sim.output['score'] / 10  # normalizado
+
+# -----------------------------
+# 3️⃣ Red Neuronal
+# -----------------------------
+X = []
+for _, row in data.iterrows():
+    X.append([
+        row['popularidad'] / max(data['popularidad']),
+        row['calificacion'] / 5,
+        score_difuso(row['genero_romantico'])
+    ])
+X = np.array(X)
+y = preferencias_usuario
+
+nn = MLPRegressor(hidden_layer_sizes=(5,), max_iter=500, random_state=42)
+nn.fit(X, y)
+
+# -----------------------------
+# 4️⃣ Función de puntuación
+# -----------------------------
+def puntuacion_film(film, w_pop, w_cal, w_dif):
+    dif = score_difuso(film['genero_romantico'])
+    nn_input = np.array([[film['popularidad']/max(data['popularidad']),
+                          film['calificacion']/5,
+                          dif]])
+    nn_score = nn.predict(nn_input)[0]
+    return w_pop*(film['popularidad']/max(data['popularidad'])) + \
+           w_cal*(film['calificacion']/5) + \
+           w_dif*nn_score
+
+# -----------------------------
+# 5️⃣ Algoritmo Genético para pesos
+# -----------------------------
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+toolbox = base.Toolbox()
+toolbox.register("attr_float", random.random)
+toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_float, n=3)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+def evalWeights(individual):
+    w_pop, w_cal, w_dif = individual
+    total = w_pop + w_cal + w_dif
+    w_pop /= total
+    w_cal /= total
+    w_dif /= total
+    score_total = 0
+    for _, film in data.iterrows():
+        score_total += puntuacion_film(film, w_pop, w_cal, w_dif)
+    return score_total,
+
+toolbox.register("evaluate", evalWeights)
+toolbox.register("mate", tools.cxBlend, alpha=0.5)
+toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.1, indpb=0.2)
+toolbox.register("select", tools.selTournament, tournsize=3)
+
+pop = toolbox.population(n=20)
+algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=30, verbose=False)
+
+best_weights = tools.selBest(pop, k=1)[0]
+w_pop, w_cal, w_dif = best_weights
+total = w_pop + w_cal + w_dif
+w_pop /= total
+w_cal /= total
+w_dif /= total
+
+# -----------------------------
+# 6️⃣ Función de recomendación GUI
+# -----------------------------
+def recomendar():
+    valor_romance = romance_var.get()
+    # Convertir entrada textual a valor numérico
+    mapping = {'Poco':0.2, 'Algo':0.5, 'Mucho':0.8}
+    dif_input = mapping[valor_romance]
+    
+    # Aplicar score difuso modificado
+    data['puntuacion_final'] = data.apply(lambda x: puntuacion_film(x, w_pop, w_cal, w_dif), axis=1)
+    data_sorted = data.sort_values('puntuacion_final', ascending=False)
+    
+    # Limpiar lista anterior
+    for item in tree.get_children():
+        tree.delete(item)
+    # Agregar nuevas recomendaciones
+    for _, row in data_sorted.iterrows():
+        tree.insert("", "end", values=(row['titulo'], round(row['puntuacion_final'], 3)))
+
+# -----------------------------
+# 7️⃣ Interfaz gráfica
+# -----------------------------
+root = tk.Tk()
+root.title("Recomendador de Películas")
+
+tk.Label(root, text="Preferencia romántica:").pack(pady=5)
+
+romance_var = tk.StringVar(value='Algo')
+combo = ttk.Combobox(root, textvariable=romance_var, values=['Poco','Algo','Mucho'], state='readonly')
+combo.pack(pady=5)
+
+tk.Button(root, text="Generar Recomendaciones", command=recomendar).pack(pady=10)
+
+# Tabla de resultadospy
+columns = ('Título', 'Puntuación')
+tree = ttk.Treeview(root, columns=columns, show='headings')
+tree.heading('Título', text='Título')
+tree.heading('Puntuación', text='Puntuación')
+tree.pack(pady=10)
+
+root.mainloop()
